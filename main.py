@@ -66,7 +66,8 @@ class LightningModel(pl.LightningModule):
         self.miner_fn = miners.MultiSimilarityMiner(epsilon=0.1, distance=CosineSimilarity())
         # Set loss_function
         self.loss_fn = losses.MultiSimilarityLoss(alpha=1, beta=50, base=0.0)
-        self.loss_fn2 = losses.ContrastiveLoss(pos_margin=0, neg_margin=1)
+        #self.loss_fn = losses.ContrastiveLoss(pos_margin=0, neg_margin=1)
+        self.loss_fn2 = losses.ContrastiveLoss(pos_margin=0, neg_margin=2)
         
         
     def forward(self, images, is_transformed):
@@ -81,14 +82,16 @@ class LightningModel(pl.LightningModule):
         return descriptors, compressed_descriptors
 
     def configure_optimizers(self):
+        
         optimizers = torch.optim.Adam(self.parameters(), lr=0.0001, eps=1e-08, weight_decay=0)
         #optimizers = torch.optim.SGD(self.parameters(), lr=0.0001, weight_decay=0, momentum=0.9)
         scheduler = torch.optim.lr_scheduler.StepLR(optimizers, step_size = 4, gamma=0.1, verbose=True)
-        #return optimizers
+
         return {
         'optimizer': optimizers,
         'lr_scheduler': scheduler,
         'monitor': 'loss'}
+
 
     #  The loss function call (this method will be called at each training iteration)
     def loss_function(self, descriptors, labels):
@@ -99,50 +102,37 @@ class LightningModel(pl.LightningModule):
         loss = self.loss_fn(descriptors, labels)
         return loss
     
-    def vicreg_loss(self, descriptors, labels, ref_desc):
+    def vicreg_loss(self, descriptors,ref_desc):
         vicreg_loss = self.loss_aug(descriptors, ref_emb = ref_desc)
         return vicreg_loss
-    
-    def display_img(self,img1, augmImg1, lab1, lab2):
-        #plt.title(lab1) 
-        plt.imshow(img1)
-        #plt.show()
-        
-        plt.savefig('/content/original.jpg')
-        #plt.title(lab2)
-        plt.imshow(augmImg1)
-        #plt.show()
-        plt.savefig('/content/augmented.jpg')
         
     # This is the training step that's executed at each iteration
     def training_step(self, batch, batch_idx):
        
         if self.self_supervised:
             images, images_aug, labels = batch
+            #images, labels = batch
         else:
             images, labels = batch
             
+        
+        
         num_places, num_images_per_place, C, H, W = images.shape
         images = images.view(num_places * num_images_per_place, C, H, W)
-        if self.self_supervised:
-            images_aug = images_aug.view(num_places * num_images_per_place, C, H, W)
+        images_aug = images_aug.view(num_places * num_images_per_place, C, H, W)
         labels = labels.view(num_places * num_images_per_place)
-
-        # Show or save image
-        #img1 = images[0].cpu().numpy().transpose((1,2,0))
-        #augmImg1 = images_aug[0].cpu().numpy().transpose((1,2,0))
-        #self.display_img(img1, augmImg1,labels[0], labels[2])
-        #exit()
         
         # Feed forward the batch to the model
         descriptors, compressed_descriptors = self(images, False)  # Here we are calling the method forward that we defined above
-        if self_supervised:
-            descriptors_aug, compressed_descriptors = self(images_aug,False)
+        
         loss = self.loss_function(descriptors, labels)  # Call the loss_function we defined above
         #print(f"Descriptors:{len(descriptors)}  {descriptors.shape}")
         if self.self_supervised:
-            loss = self.vicreg_loss(descriptors=descriptors, labels=labels, ref_desc = descriptors_aug)
+            descriptors_aug, _ = self(images_aug,False)
+            loss = self.vicreg_loss(descriptors=descriptors, ref_desc = descriptors_aug)
         if args.enable_gpm:
+            # descriptors = descriptors.cpu() #tensore privo di gradient
+            # compressed_descriptors = compressed_descriptors.cpu().detach()
             self.pbank.update_bank(compressed_descriptors, labels)
             loss_head = self.loss_head(compressed_descriptors, labels)
             loss = loss + loss_head
@@ -186,10 +176,29 @@ class LightningModel(pl.LightningModule):
 
 def get_datasets_and_dataloaders(args, bank=None):
     train_transform = tfm.Compose([
+        #tfm.RandAugment(num_ops=3),
+        # tfm.RandomHorizontalFlip(p = 0.7),
+        # tfm.ColorJitter(brightness = 0.3,  
+        #                 contrast = 0.6, 
+        #                 saturation = 0.5,
+        #                 hue = 0.1) ,
+        # tfm.RandomApply(transforms=[
+        #                             tfm.ColorJitter(brightness = 0.3,  
+        #                                     contrast = 0.6, 
+        #                                     saturation = 0.5,
+        #                                     hue = 0.1),
+        #                             tfm.RandomAffine(30, translate=(0.2,0.2), scale=None, shear=None, interpolation=tfm.InterpolationMode.NEAREST, fill=0, center=None),
+        #                             tfm.RandomEqualize(p=0.6),
+        #                             tfm.RandomPerspective(p=0.8, distortion_scale=0.6),
+        #                             # tfm.GaussianBlur(kernel_size=(5, 9), sigma=(0.1, 5)),
+        #                             tfm.RandomCrop(size=224),
+        #                             ],
+        #                             p=0.5),
         tfm.RandomApply(transforms=[
                         tfm.RandomHorizontalFlip(p = 0.7),
                         tfm.RandomCrop(size=224),
                     ], p=0.3),
+        # tfm.ColorJitter(brightness = (0.1,0.9)),
         tfm.ToTensor(),
         tfm.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
     ])
@@ -204,8 +213,7 @@ def get_datasets_and_dataloaders(args, bank=None):
     test_dataset = TestDataset(dataset_folder=args.test_path)
 
     # Define dataloaders, train one has with proxy and without proxy case
-    # If we have a bank we use ProxyBankBatchSampler
-    if bank is not None:
+    if bank is not None: #la banca ha già eseguito una epoch -> utilizzo il batchSampler
         # Proxy Sampler with ProxyBank
         my_proxy_sampler = utils.ProxyBankBatchSampler(train_dataset, args.batch_size , bank)
         train_loader = DataLoader(dataset=train_dataset, batch_sampler = my_proxy_sampler, num_workers=args.num_workers)
