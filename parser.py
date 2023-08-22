@@ -18,6 +18,8 @@ def parse_arguments():
                         help="whether to load pytorch lightning checkpoints")
     parser.add_argument("--only_test", default=False,
                         help="avoid the train phase and test on --test_path")
+    parser.add_argument("--self_supervised", default=False,
+                        help="self_supervised enable")
     
     # Architecture parameters
     parser.add_argument("--descriptors_dim", type=int, default=512,
@@ -26,18 +28,16 @@ def parse_arguments():
                         help="whether to adopt Global Proxy Mining module")
     parser.add_argument("--pooling_layer", type = str, default=None,
                         help="change the last pooling layer")
-    parser.add_argument("--parallel_training", default=False,
-                        help="Use DDP to train on 2 GPUs")
-    parser.add_argument("--self_supervised_learning", default = False, 
-                        help = "apply a customized augemtation to images in order to perform constrative loss and self-supervised learning")
-
-
+    parser.add_argument("--optimizer", type = str, default="sgd",
+                        help="change the optimizer")
+    parser.add_argument("--lr_scheduler", type = str, default="",
+                        help="change the learning rate scheduler")
     
     # Visualizations parameters
     parser.add_argument("--num_preds_to_save", type=int, default=0,
                         help="At the end of training, save N preds for each query. "
                         "Try with a small number like 3")
-    parser.add_argument("--save_only_wrong_preds", action="store_true",
+    parser.add_argument("--save_only_wrong_preds",  action="store_true",
                         help="When saving preds (if num_preds_to_save != 0) save only "
                         "preds for difficult queries, i.e. with uncorrect first prediction")
 
