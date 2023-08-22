@@ -1,9 +1,12 @@
---extra-index-url https://download.pytorch.org/whl/cu116
+--extra-index-url https://download.pytorch.org/whl/cu118
 
-torch==1.13.1+cu116 
-torchvision==0.14.1+cu116
-faiss-cpu==1.7.3
+torch==2.0+cu118
+torchvision==0.15+cu118
+faiss-cpu
 pytorch-lightning==1.9.4
 pytorch-metric-learning==2.0.1
 opencv-python==4.7.0.72
 scikit-image==0.19.3
+googledrivedownloader==0.4
+gdown
+ipywidgets
