@@ -10,7 +10,7 @@ from torch import nn
 import torch.nn.functional as F
 from collections import defaultdict
 import math
-import visualizations
+from VPR2023 import visualizations
 
 
 # Compute R@1, R@5, R@10, R@20
