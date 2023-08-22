@@ -3,7 +3,7 @@
 torch==2.0+cu118
 torchvision==0.15+cu118
 faiss-cpu
-lightning
+pytorch-lightning==1.9.4
 pytorch-metric-learning==2.0.1
 opencv-python==4.7.0.72
 scikit-image==0.19.3
