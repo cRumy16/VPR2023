@@ -13,10 +13,10 @@ import parser
 from datasets.test_dataset import TestDataset
 from datasets.train_dataset import TrainDataset
 
-
+import matplotlib.pyplot as plt
 class LightningModel(pl.LightningModule):
     def __init__(self, val_dataset, test_dataset, avgpool, avgpool_param = {}, 
-                proxy_bank = None, descriptors_dim = 512, num_preds_to_save = 0, save_only_wrong_preds = True, self_supervised=False, optimizer_choice = "sgd", lr_scheduler = None):
+                proxy_bank = None, descriptors_dim = 512, num_preds_to_save = 0, save_only_wrong_preds = False, self_supervised=False, optimizer_choice = "sgd", lr_scheduler = None):
         super().__init__()
         self.val_dataset = val_dataset
         self.test_dataset = test_dataset
@@ -29,6 +29,7 @@ class LightningModel(pl.LightningModule):
         self.milestones = [5, 10, 15]
         # Use a pretrained model
         self.model = torchvision.models.resnet18(weights=torchvision.models.ResNet18_Weights.DEFAULT)
+        
         
         if avgpool == "GeM":
             self.model.avgpool = utils.GeM()
@@ -58,13 +59,17 @@ class LightningModel(pl.LightningModule):
             self.loss_head = losses.MultiSimilarityLoss(alpha=1, beta=50, base=0.0)
             # self.loss_head = losses.ContrastiveLoss(pos_margin=0, neg_margin=1)
         if self.self_supervised:
-            self.loss_aug = losses.VICRegLoss(invariance_lambda=25, variance_mu=25, covariance_v=1, eps=1e-4)
+            self.loss_aug = losses.VICRegLoss(invariance_lambda=1, variance_mu=1, covariance_v=1, eps=1e-5) 
+            
+            
         # Set miner
-        # self.miner_fn = miners.MultiSimilarityMiner(epsilon=0.1)
+        self.miner_fn = miners.MultiSimilarityMiner(epsilon=0.1, distance=CosineSimilarity())
         # Set loss_function
-        # self.loss_fn = losses.MultiSimilarityLoss(alpha=1, beta=50, base=0.0)
-        self.loss_fn = losses.ContrastiveLoss(pos_margin=0, neg_margin=1)
-
+        self.loss_fn = losses.MultiSimilarityLoss(alpha=1, beta=50, base=0.0)
+        #self.loss_fn = losses.ContrastiveLoss(pos_margin=0, neg_margin=1)
+        self.loss_fn2 = losses.ContrastiveLoss(pos_margin=0, neg_margin=2)
+        
+        
     def forward(self, images, is_transformed):
         descriptors = self.model(images)
         if args.enable_gpm:
@@ -77,59 +82,100 @@ class LightningModel(pl.LightningModule):
         return descriptors, compressed_descriptors
 
     def configure_optimizers(self):
-        if self.optimizer_choice == "sgd":
-            optimizers = torch.optim.SGD(self.parameters(), lr=0.001, weight_decay=0.001, momentum=0.9)
-        if self.optimizer_choice == "adam":
-            print("Add: ", self.optimizer_choice)
-            optimizers = torch.optim.Adam(self.parameters(), lr=0.0001, betas=(0.9, 0.999), eps=1e-08, weight_decay=0)
+       # if self.optimizer_choice == "sgd":
+       #     optimizers = torch.optim.SGD(self.parameters(), lr=0.001, weight_decay=0.001, momentum=0.9)
+       # if self.optimizer_choice == "adam":
+       #     print("Add: ", self.optimizer_choice)
+       #     optimizers = torch.optim.Adam(self.parameters(), lr=0.0001, betas=(0.9, 0.999), eps=1e-08, weight_decay=0)
+        #return optimizers
+         #optimizers = torch.optim.SGD(self.parameters(), lr=0.001, weight_decay=0.001, momentum=0.9)
+        
+        optimizers = torch.optim.Adam(self.parameters(), lr=0.0001, eps=1e-08, weight_decay=0)
+        #optimizers = torch.optim.SGD(self.parameters(), lr=0.0001, weight_decay=0, momentum=0.9)
+        scheduler = torch.optim.lr_scheduler.StepLR(optimizers, step_size = 4, gamma=0.1, verbose=True)
+        #return optimizers
+        return {
+        'optimizer': optimizers,
+        'lr_scheduler': scheduler,
+        'monitor': 'loss'}
         #TODO: change
-        if self.lr_scheduler == "reducelronplateau" :
-            print("Add: ", self.lr_scheduler)
-            schedulers = [ torch.optim.lr_scheduler.MultiStepLR(optimizers, milestones=self.milestones, gamma=0.3) ]
-        else :
-            schedulers = []
-        return [optimizers] , schedulers
+       # if self.lr_scheduler == "reducelronplateau" :
+       #     print("Add: ", self.lr_scheduler)
+        #    schedulers = [ torch.optim.lr_scheduler.MultiStepLR(optimizers, milestones=self.milestones, gamma=0.3) ]
+       # else :
+       #     schedulers = []
+       # return [optimizers] , schedulers
 
     #  The loss function call (this method will be called at each training iteration)
     def loss_function(self, descriptors, labels):
         # Include a miner for loss'pair selection
-        # miner_output = self.miner_fn(descriptors , labels)
+       # miner_output = self.miner_fn(descriptors , labels)
         # Compute the loss using the loss function and the miner output instead of all possible batch pairs
-        # loss = self.loss_fn(descriptors, labels, miner_output)
+        #loss = self.loss_fn(descriptors, labels, miner_output)
         loss = self.loss_fn(descriptors, labels)
         return loss
     
-    def vicreg_loss(self, descriptors, labels, ref_desc):
+    def combined_loss(self, descriptors, labels, ref_desc):
         vicreg_loss = self.loss_aug(descriptors, ref_emb = ref_desc)
+        #contrastive_loss = self.loss_function(descriptors=descriptors, labels=labels)
+        #loss = 1 * vicreg_loss #+  0* multisimilarity_loss
+        #multisim_loss = self.loss_fn2(ref_desc, labels=labels)
+        #loss = 1*contrastive_loss + 1*multisim_loss + 0*vicreg_loss
         return vicreg_loss
     
+    def display_img(self,img1, augmImg1, lab1, lab2):
+        #plt.title(lab1) 
+        plt.imshow(img1)
+        #plt.show()
+        
+        plt.savefig('/content/original.jpg')
+        #plt.title(lab2)
+        plt.imshow(augmImg1)
+        #plt.show()
+        plt.savefig('/content/augmented.jpg')
+        
     # This is the training step that's executed at each iteration
     def training_step(self, batch, batch_idx):
+       
         if self.self_supervised:
             images, images_aug, labels = batch
+            #images, labels = batch
         else:
             images, labels = batch
+            
+        
+        
         num_places, num_images_per_place, C, H, W = images.shape
         images = images.view(num_places * num_images_per_place, C, H, W)
         images_aug = images_aug.view(num_places * num_images_per_place, C, H, W)
         labels = labels.view(num_places * num_images_per_place)
+        
+        #img1 = images[0].cpu().numpy().transpose((1,2,0))
+        #augmImg1 = images_aug[0].cpu().numpy().transpose((1,2,0))
+        #self.display_img(img1, augmImg1,labels[0], labels[2])
+        #exit()
         # Feed forward the batch to the model
         descriptors, compressed_descriptors = self(images, False)  # Here we are calling the method forward that we defined above
         descriptors_aug, compressed_descriptors = self(images_aug,False)
         loss = self.loss_function(descriptors, labels)  # Call the loss_function we defined above
-
+        #print(f"Descriptors:{len(descriptors)}  {descriptors.shape}")
         if self.self_supervised:
-            loss = self.vicreg_loss(descriptors=descriptors, labels=labels, ref_desc = descriptors_aug)
-
+            # images_aug = images_aug.view(num_places * num_images_per_place, C, H, W)
+            # descriptors_aug = self(images_aug, True)
+            #loss_aug = self.loss_aug(descriptors_aug)
+            #loss = loss + loss_aug
+            loss = self.combined_loss(descriptors=descriptors, labels=labels, ref_desc = descriptors_aug)
+            #loss = self.combined_loss(descriptors=descriptors_aug, ref_desc=descriptors, labels=labels)
         if args.enable_gpm:
             # descriptors = descriptors.cpu() #tensore privo di gradient
             # compressed_descriptors = compressed_descriptors.cpu().detach()
             self.pbank.update_bank(compressed_descriptors, labels)
             loss_head = self.loss_head(compressed_descriptors, labels)
             loss = loss + loss_head
-        
+            
         self.log('loss', loss.item(), logger=True)
         return {'loss': loss}
+    
     # For validation and test, we iterate step by step over the validation set
     def inference_step(self, batch):
         images, _ = batch
@@ -160,26 +206,38 @@ class LightningModel(pl.LightningModule):
             inference_dataset, queries_descriptors, database_descriptors,
             trainer.logger.log_dir, num_preds_to_save, self.save_only_wrong_preds
         )
-        print(recalls_str)
+        print(f"\n{recalls_str}\n")
         self.log('R@1', recalls[0], prog_bar=False, logger=True)
         self.log('R@5', recalls[1], prog_bar=False, logger=True)
 
-def get_datasets_and_dataloaders(self, args, bank=None):
-    if self.self_supervised : 
-        train_transform = tfm.Compose([
-             tfm.RandomApply(transforms=[
-                    tfm.RandomHorizontalFlip(p = 0.7),
-                    tfm.RandomCrop(size=224),
-            ], p=0.3),
-            tfm.ToTensor(),
-            tfm.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-        ])
-    else:
-        train_transform = tfm.Compose([
-            tfm.RandAugment(num_ops=3),
-            tfm.ToTensor(),
-            tfm.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-        ])
+def get_datasets_and_dataloaders(args, bank=None):
+    train_transform = tfm.Compose([
+        #tfm.RandAugment(num_ops=3),
+        # tfm.RandomHorizontalFlip(p = 0.7),
+        # tfm.ColorJitter(brightness = 0.3,  
+        #                 contrast = 0.6, 
+        #                 saturation = 0.5,
+        #                 hue = 0.1) ,
+        # tfm.RandomApply(transforms=[
+        #                             tfm.ColorJitter(brightness = 0.3,  
+        #                                     contrast = 0.6, 
+        #                                     saturation = 0.5,
+        #                                     hue = 0.1),
+        #                             tfm.RandomAffine(30, translate=(0.2,0.2), scale=None, shear=None, interpolation=tfm.InterpolationMode.NEAREST, fill=0, center=None),
+        #                             tfm.RandomEqualize(p=0.6),
+        #                             tfm.RandomPerspective(p=0.8, distortion_scale=0.6),
+        #                             # tfm.GaussianBlur(kernel_size=(5, 9), sigma=(0.1, 5)),
+        #                             tfm.RandomCrop(size=224),
+        #                             ],
+        #                             p=0.5),
+        tfm.RandomApply(transforms=[
+                        tfm.RandomHorizontalFlip(p = 0.7),
+                        tfm.RandomCrop(size=224),
+                    ], p=0.3),
+        # tfm.ColorJitter(brightness = (0.1,0.9)),
+        tfm.ToTensor(),
+        tfm.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+    ])
     train_dataset = TrainDataset(
         dataset_folder=args.train_path,
         img_per_place=args.img_per_place,
@@ -191,18 +249,15 @@ def get_datasets_and_dataloaders(self, args, bank=None):
     test_dataset = TestDataset(dataset_folder=args.test_path)
 
     # Define dataloaders, train one has with proxy and without proxy case
-    if bank is not None:
+    if bank is not None: #la banca ha già eseguito una epoch -> utilizzo il batchSampler
         # Proxy Sampler with ProxyBank
         my_proxy_sampler = utils.ProxyBankBatchSampler(train_dataset, args.batch_size , bank)
         train_loader = DataLoader(dataset=train_dataset, batch_sampler = my_proxy_sampler, num_workers=args.num_workers)
     else:
-        if self.self_supervised:
-            train_loader = DataLoader(dataset=train_dataset, batch_size=args.batch_size, shuffle=False, num_workers=args.num_workers)
-        else :
-            train_loader = DataLoader(dataset=train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=args.num_workers)
+        train_loader = DataLoader(dataset=train_dataset, batch_size=args.batch_size, shuffle=False, num_workers=args.num_workers)
    
-    val_loader = DataLoader(dataset=val_dataset, batch_size=args.batch_size, num_workers=4, shuffle=False)
-    test_loader = DataLoader(dataset=test_dataset, batch_size=args.batch_size, num_workers=4, shuffle=False)
+    val_loader = DataLoader(dataset=val_dataset, batch_size=args.batch_size, num_workers=args.num_workers, shuffle=False)
+    test_loader = DataLoader(dataset=test_dataset, batch_size=args.batch_size, num_workers=args.num_workers, shuffle=False)
     return train_dataset, val_dataset, test_dataset, train_loader, val_loader, test_loader
 
 if __name__ == '__main__':
@@ -215,7 +270,7 @@ if __name__ == '__main__':
         proxy_bank = None
 
     train_dataset, val_dataset, test_dataset, train_loader, val_loader, test_loader = get_datasets_and_dataloaders(args, proxy_bank)
-    kwargs = {"val_dataset": val_dataset, "test_dataset": test_dataset, "avgpool": args.pooling_layer, "self_supervised": args.self_supervised, "optimizer_choice": args.optimizer, "lr_scheduler": args.lr_scheduler}
+    kwargs = {"val_dataset": val_dataset, "test_dataset": test_dataset, "avgpool": args.pooling_layer, "self_supervised": args.self_supervised, "optimizer_choice": args.optimizer, "lr_scheduler": args.lr_scheduler, "num_preds_to_save": args.num_preds_to_save, "save_only_wrong_preds": args.save_only_wrong_preds}
     
     if args.enable_gpm:
         kwargs.update({"proxy_bank": proxy_bank})
@@ -228,9 +283,9 @@ if __name__ == '__main__':
     # Model params saving using Pytorch Lightning. Save the best 3 models according to Recall@1
     checkpoint_cb = ModelCheckpoint(
         monitor='R@1',
-        filename='_epoch({epoch:02d})_step({step:04d})_R@1[{val/R@1:.4f}]_R@5[{val/R@5:.4f}]',
+        filename='checkpoint',
         auto_insert_metric_name=False,
-        save_weights_only=True,
+        save_weights_only=True, #Better False if using optimzer
         save_top_k=3,
         mode='max'
     )
@@ -239,7 +294,7 @@ if __name__ == '__main__':
     trainer = pl.Trainer(
         accelerator='gpu',
         devices=[0],
-        default_root_dir='./LOGS',  # Tensorflow can be used to viz
+        default_root_dir='./logs',  # Tensorflow can be used to viz
         num_sanity_val_steps=0,  # runs a validation step before stating training
         precision=16,  # we use half precision to reduce  memory usage
         max_epochs=args.max_epochs,
@@ -251,6 +306,6 @@ if __name__ == '__main__':
     
     # Train or test only with a pretrained model
     if not args.only_test:
-        trainer.validate(model=model, dataloaders=val_loader)
+       # trainer.validate(model=model, dataloaders=val_loader)
         trainer.fit(model=model, train_dataloaders=train_loader, val_dataloaders=val_loader)
     trainer.test(model=model, dataloaders=test_loader)
