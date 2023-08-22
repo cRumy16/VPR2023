@@ -1,12 +1,12 @@
 import torch
 import numpy as np
 import torchvision.models
-import lightning as pl
+import pytorch_lightning as pl
 import torchvision.transforms as tfm
 from pytorch_metric_learning import losses, miners
 from pytorch_metric_learning.distances import CosineSimilarity, DotProductSimilarity
 from torch.utils.data.dataloader import DataLoader
-from lightning.callbacks import ModelCheckpoint
+from pytorch_lightning.callbacks import ModelCheckpoint
 
 import utils
 import parser
